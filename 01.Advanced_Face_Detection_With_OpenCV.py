@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 from PyQt5 import QtWidgets, QtGui, QtCore
-from PyQt5.QtWidgets import QLabel, QPushButton, QComboBox, QCheckBox, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import QLabel, QPushButton, QComboBox, QCheckBox, QVBoxLayout, QWidget, QLineEdit, QSlider
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import Qt, QSize
 from datetime import datetime
@@ -10,7 +10,7 @@ import time
 class FaceDetectionApp(QWidget):
     def __init__(self):
         super().__init__()
-        self.frame_size = (640, 480)  # Define frame size here
+        self.frame_size = (640, 480)
         self.initUI()
         self.setupCamera()
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
@@ -19,6 +19,7 @@ class FaceDetectionApp(QWidget):
         self.recording = False
         self.out = None
         self.filter = 'None'
+        self.filter_intensity = 1.0
 
         # Timer for FPS
         self.last_time = time.time()
@@ -26,7 +27,7 @@ class FaceDetectionApp(QWidget):
 
     def initUI(self):
         self.setWindowTitle('Enhanced Face Detection GUI')
-        self.setGeometry(100, 100, 1000, 800)
+        self.setGeometry(100, 100, 1200, 800)
 
         # Layouts
         main_layout = QVBoxLayout()
@@ -51,22 +52,20 @@ class FaceDetectionApp(QWidget):
 
         # Filter selection
         self.filter_combo = QComboBox(self)
-        self.filter_combo.addItems([
-            'None',
-            'Grayscale',
-            'Sepia',
-            'Invert',
-            'Sketch',
-            'Blur',
-            'Cartoon',
-            'Emboss',
-            'Edge Detection',
-            'Pencil Sketch'
-        ])
+        self.filter_combo.addItems(['None', 'Grayscale', 'Sepia', 'Invert', 'Threshold','Sketch','Blur','Cartoon','Emboss','Edge Detection','Pencil Sketch'])
         self.filter_combo.setCurrentText('None')
         self.filter_combo.setToolTip('Select video filter')
         self.filter_combo.currentTextChanged.connect(self.updateFilter)
         control_panel.addWidget(self.filter_combo)
+
+        # Filter intensity adjustment
+        self.filter_intensity_slider = QSlider(Qt.Horizontal, self)
+        self.filter_intensity_slider.setRange(0, 100)
+        self.filter_intensity_slider.setValue(100)
+        self.filter_intensity_slider.setToolTip('Adjust filter intensity')
+        self.filter_intensity_slider.setVisible(False)
+        self.filter_intensity_slider.valueChanged.connect(self.updateFilterIntensity)
+        control_panel.addWidget(self.filter_intensity_slider)
 
         # Filter checkbox
         self.filter_checkbox = QCheckBox('Apply Filter', self)
@@ -94,6 +93,11 @@ class FaceDetectionApp(QWidget):
         self.snapshot_button.clicked.connect(self.saveSnapshot)
         self.snapshot_button.setToolTip('Save a snapshot of the current frame')
         control_panel.addWidget(self.snapshot_button)
+
+        # Custom Filename Input
+        self.filename_input = QLineEdit(self)
+        self.filename_input.setPlaceholderText('Enter custom filename for snapshot')
+        control_panel.addWidget(self.filename_input)
 
         # Status label
         self.status_label = QLabel('Status: Ready', self)
@@ -129,6 +133,13 @@ class FaceDetectionApp(QWidget):
 
     def updateFilter(self, filter):
         self.filter = filter
+        if filter in ['Blur', 'Threshold']:
+            self.filter_intensity_slider.setVisible(True)
+        else:
+            self.filter_intensity_slider.setVisible(False)
+
+    def updateFilterIntensity(self, value):
+        self.filter_intensity = value / 100.0
 
     def toggleFilter(self, state):
         if state == Qt.Checked:
@@ -143,22 +154,27 @@ class FaceDetectionApp(QWidget):
             sepia_filter = np.array([[0.272, 0.534, 0.131],
                                      [0.349, 0.686, 0.168],
                                      [0.393, 0.769, 0.189]])
-            # Apply sepia filter and ensure it has 3 channels
             frame_sepia = cv2.transform(frame, sepia_filter)
             return np.clip(frame_sepia, 0, 255).astype(np.uint8)
         elif self.filter == 'Invert':
             return cv2.bitwise_not(frame)
-
+        elif self.filter == 'Blur':
+            ksize = int(self.filter_intensity * 20) | 1  # Ensure odd size
+            return cv2.GaussianBlur(frame, (ksize, ksize), 0)
+        elif self.filter == 'Edge Detection':
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            edges = cv2.Canny(gray, 100, 200)
+            return cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
+        elif self.filter == 'Threshold':
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
+            return cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
         elif self.filter == 'Sketch':
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             inv = cv2.bitwise_not(gray)
             blur = cv2.GaussianBlur(inv, (21, 21), 0)
             sketch = cv2.divide(gray, 255 - blur, scale=256)
             return cv2.cvtColor(sketch, cv2.COLOR_GRAY2BGR)
-
-        elif self.filter == 'Blur':
-            return cv2.GaussianBlur(frame, (15, 15), 0)
-
         elif self.filter == 'Cartoon':
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             gray = cv2.medianBlur(gray, 5)
@@ -168,18 +184,12 @@ class FaceDetectionApp(QWidget):
             color = cv2.bilateralFilter(frame, 9, 250, 250)
             cartoon = cv2.bitwise_and(color, color, mask=edges)
             return cartoon
-
         elif self.filter == 'Emboss':
             kernel = np.array([[ -2, -1, 0],
                             [ -1,  1, 1],
                             [  0,  1, 2]])
             embossed = cv2.filter2D(frame, -1, kernel)
             return cv2.convertScaleAbs(embossed)
-
-        elif self.filter == 'Edge Detection':
-            edges = cv2.Canny(frame, 100, 200)
-            return cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
-
         elif self.filter == 'Pencil Sketch':
             gray, sketch = cv2.pencilSketch(frame, sigma_s=60, sigma_r=0.07, shade_factor=0.05)
             return sketch  # Or return gray for grayscale pencil sketch
@@ -239,10 +249,9 @@ class FaceDetectionApp(QWidget):
     def saveSnapshot(self):
         ret, frame = self.cap.read()
         if ret:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            snapshot_filename = f'face_snapshot_{timestamp}.png'
-            cv2.imwrite(snapshot_filename, frame)
-            self.status_label.setText(f'Snapshot saved as {snapshot_filename}')
+            filename = self.filename_input.text() if self.filename_input.text() else f'face_snapshot_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png'
+            cv2.imwrite(filename, frame)
+            self.status_label.setText(f'Snapshot saved as {filename}')
             self.status_label.setStyleSheet("color: blue;")
 
     def closeEvent(self, event):
@@ -256,5 +265,4 @@ if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
     window = FaceDetectionApp()
     window.show()
-    sys.exit(app.exec_())
     sys.exit(app.exec_())
